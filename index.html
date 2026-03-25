@@ -522,9 +522,6 @@ const SHEET_MONTH_MAP = {
   'Hoja7':7,'Hoja8':8,'Hoja9':9,'Hoja10':10,'Hoja11':11,'Hoja12':12
 };
 
-// Account codes in the balance that map to SENIAT fields
-const ACCOUNT_MAP = [];
-
 // ─── File Inputs ──────────────────────────────────────────────────────────────
 document.getElementById('fileExcel').addEventListener('change', (e) => {
   const f = e.target.files[0];
@@ -652,7 +649,6 @@ async function parseExcel(file) {
           rows.forEach(row => {
             if (!row || !row[0]) return;
             const cell0 = String(row[0]).trim();
-            // Account codes are 7-digit numbers
             const codeMatch = cell0.match(/^(\d{7})\s+/);
             if (codeMatch) {
               const code = codeMatch[1];
@@ -701,7 +697,6 @@ async function parseSeniatPdf(file) {
   // Extract period (MES/AÑO)
   const periodMatch = fullText.match(/MES\s+A[ÑN]O\s+(\d{2})\s+(\d{4})/);
   if (!periodMatch) {
-    // Try alternate pattern
     const alt = fullText.match(/(\d{2})\s+2024/);
     if (!alt) return null;
   }
@@ -713,10 +708,8 @@ async function parseSeniatPdf(file) {
 
   function parseVenFloat(s) {
     if (!s) return 0;
-    // Venezuelan format: 1.234,56 or 1234.56
     s = s.trim();
     if (s.includes(',') && s.includes('.')) {
-      // 1.234,56 → remove dots, replace comma
       if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
         return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
       }
@@ -724,7 +717,6 @@ async function parseSeniatPdf(file) {
     return parseFloat(s.replace(',','.')) || 0;
   }
 
-  // Extract all numbers from text in sequence - more robust approach
   function extractAfterLabel(label, text) {
     const idx = text.indexOf(label);
     if (idx < 0) return 0;
@@ -760,8 +752,6 @@ async function parseSeniatPdf(file) {
   // Debito fiscal line (item 43)
   data.debito_fiscal_item43 = extractAfterLabel('11.805', fullText) || 0; // fallback
 
-  // Better extraction using numbered items from the text
-  // Parse all "item NN value" pairs
   const itemPattern = /\b(\d{2,3})\b\s+([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)\b/g;
   const items = {};
   let match;
@@ -783,7 +773,7 @@ async function parseSeniatPdf(file) {
   if (items[33] > 0) data.compras_internas_gravadas_base = items[33];
   if (items[43] > 0) data.debito_fiscal_calculado = items[43];
   if (items[39] > 0) data.total_creditos_fiscales = items[39];
-  if (items[38] > 0) data.ajustes_creditos = items[38]; // Añadido para Excedente Crédito Fiscal anterior
+  if (items[38] > 0) data.ajustes_creditos = items[38]; 
 
   return data;
 }
@@ -803,13 +793,13 @@ function reconcile(monthNum, accounts, seniat) {
   rows.push({
     id: 'debito_fiscal',
     concepto: 'Débito Fiscal',
-    codigosBalance: '2121001',
+    codigosBalance: deb2121.name !== 'N/A' ? deb2121.name : 'Débito Fiscal',
     campoBalance: 'Debe del período',
     valorBalance: balDebito,
     campoSeniat: 'Ítem 49 — Total Débitos Fiscales',
     valorSeniat: senDebito,
     diferencia: senDebito !== null ? balDebito - senDebito : null,
-    nota: 'Cta. 2121001 — columna Debe del período (valor que liquida el débito fiscal).'
+    nota: 'Columna Debe del período (valor que liquida el débito fiscal).'
   });
 
   // ── 2. CRÉDITO FISCAL ─────────────────────────────────────────────────────
@@ -819,13 +809,13 @@ function reconcile(monthNum, accounts, seniat) {
   rows.push({
     id: 'credito_fiscal',
     concepto: 'Crédito Fiscal',
-    codigosBalance: '1151001',
+    codigosBalance: cred1151.name !== 'N/A' ? cred1151.name : 'Crédito Fiscal',
     campoBalance: 'Haber del período',
     valorBalance: balCredito,
     campoSeniat: 'Ítem 39 — Total Créditos Fiscales',
     valorSeniat: senCredito,
     diferencia: senCredito !== null ? balCredito - senCredito : null,
-    nota: 'Cta. 1151001 — columna Haber del período (crédito fiscal aplicado/consumido).'
+    nota: 'Columna Haber del período (crédito fiscal aplicado/consumido).'
   });
 
   // ── 3. EXCEDENTE CRÉDITO FISCAL ──────────────────────────────────────────
@@ -839,59 +829,49 @@ function reconcile(monthNum, accounts, seniat) {
   rows.push({
     id: 'excedente_anterior',
     concepto: 'Ajuste Créditos Fiscales Anteriores',
-    codigosBalance: '1151002',
+    codigosBalance: exc1151.name !== 'N/A' ? exc1151.name : 'Excedente Crédito Fiscal',
     campoBalance: 'Debe del período',
     valorBalance: balExcDebe,
     campoSeniat: 'Ítem 38 — Ajuste Créditos Períodos Anteriores',
     valorSeniat: senExcAnt,
     diferencia: senExcAnt !== null ? balExcDebe - senExcAnt : null,
-    nota: 'Cta. 1151002 — Debe del período.'
+    nota: 'Debe del período (monto aplicado en esta declaración).'
   });
   rows.push({
     id: 'excedente_siguiente',
     concepto: 'Excedente CF para Mes Siguiente',
-    codigosBalance: '1151002',
+    codigosBalance: exc1151.name !== 'N/A' ? exc1151.name : 'Excedente Crédito Fiscal',
     campoBalance: 'Movimiento / Siguiente Col',
     valorBalance: balExcSaldo,
     campoSeniat: 'Ítem 60 — Excedente CF Mes Siguiente',
     valorSeniat: senExcSig,
     diferencia: senExcSig !== null ? balExcSaldo - senExcSig : null,
-    nota: 'Cta. 1151002 — Siguiente columna en el Excel (Movimiento).'
+    nota: 'Siguiente columna en el Excel (Movimiento).'
   });
 
-  // ── 4. RETENCIONES IVA DEL PERÍODO ───────────────────────────────────────
-  const ret1151 = getAccount('1151007');
-  const balRetDebe = Math.abs(ret1151.debitos);
-  const senRet = seniat ? seniat.retenciones_periodo : null;
-  rows.push({
-    id: 'retenciones_periodo',
-    concepto: 'Retenciones IVA del Período',
-    codigosBalance: '1151007',
-    campoBalance: 'Debe del período',
-    valorBalance: balRetDebe,
-    campoSeniat: 'Ítem 66 — Retenciones del Período',
-    valorSeniat: senRet,
-    diferencia: senRet !== null ? balRetDebe - senRet : null,
-    nota: 'Cta. 1151007 — Debe del período: IVA retenido por clientes agentes de retención.'
-  });
-
-  // ── 5. BASE IMPONIBLE VENTAS GRAVADAS ────────────────────────────────────
+  // ── 4. BASE IMPONIBLE VENTAS GRAVADAS ────────────────────────────────────
   const ingCodes = ['4131001','4131002','4131003'];
   const balVentasHaber = ingCodes.reduce((acc, c) => acc + Math.abs(getAccount(c).creditos), 0);
   const senVentasGrav = seniat ? seniat.ventas_internas_gravadas_base : null;
+  
+  const nombresVentas = ingCodes
+    .filter(c => getAccount(c).name !== 'N/A')
+    .map(c => getAccount(c).name)
+    .join(' + ') || 'Cuentas de Ingresos';
+
   rows.push({
     id: 'base_ventas_grav',
     concepto: 'Base Imponible — Ventas Gravadas',
-    codigosBalance: '4131001 + 4131002 + 4131003',
+    codigosBalance: nombresVentas,
     campoBalance: 'Haber del período',
     valorBalance: balVentasHaber,
     campoSeniat: 'Ítem 42 — Ventas Gravadas Base Imponible',
     valorSeniat: senVentasGrav,
     diferencia: senVentasGrav !== null ? balVentasHaber - senVentasGrav : null,
-    nota: 'Cuentas 4131xxx — Haber del período: ventas/ingresos del mes.'
+    nota: 'Haber del período. Nota: El balance es mensual, el PDF puede ser quincenal.'
   });
 
-  // ── 6. BASE IMPONIBLE COMPRAS GRAVADAS ───────────────────────────────────
+  // ── 5. BASE IMPONIBLE COMPRAS GRAVADAS ───────────────────────────────────
   const comprasCodes = [
     '6211002','6211003','6211005','6211007','6211010','6211014',
     '6211029','6211032','6211033','6211034','6211035','6211038','6211040',
@@ -901,39 +881,29 @@ function reconcile(monthNum, accounts, seniat) {
   ];
   const balComprasDebe = comprasCodes.reduce((acc, c) => acc + Math.abs(getAccount(c).debitos), 0);
   const senComprasGrav = seniat ? seniat.compras_internas_gravadas_base : null;
+  
+  const nombresCompras = comprasCodes
+    .filter(c => Math.abs(getAccount(c).debitos) > 0)
+    .map(c => getAccount(c).name)
+    .join(', ') || 'Sin gastos operativos este mes';
+
   rows.push({
     id: 'compras_grav',
     concepto: 'Base Imponible — Compras Gravadas',
-    codigosBalance: 'Gastos operativos (5111xxx, 6111xxx, 6211xxx, 1133001)',
+    codigosBalance: nombresCompras,
     campoBalance: 'Debe del período',
     valorBalance: balComprasDebe,
     campoSeniat: 'Ítem 33 — Compras Internas Gravadas Base',
     valorSeniat: senComprasGrav,
     diferencia: senComprasGrav !== null ? balComprasDebe - senComprasGrav : null,
-    nota: 'Cuentas de gastos — Debe del período. Solo incluye compras con IVA (excluye nómina, prestaciones).'
-  });
-
-  // ── 7. CRUCE INTERNO: Retenciones IVA Activo vs Pasivo ───────────────────
-  const balRetActSaldo = Math.abs(getAccount('1151007').saldo_actual);
-  const balRetPasSaldo = Math.abs(getAccount('2121002').saldo_actual);
-  rows.push({
-    id: 'cruce_retenciones',
-    concepto: 'Cruce Retenciones IVA — 1151007 vs 2121002',
-    codigosBalance: '1151007 vs 2121002',
-    campoBalance: 'Saldo Actual de ambas',
-    valorBalance: balRetActSaldo,
-    campoSeniat: 'Saldo 2121002 (Ret. por enterar)',
-    valorSeniat: balRetPasSaldo,
-    diferencia: balRetActSaldo - balRetPasSaldo,
-    nota: '1151007 = IVA retenido a favor del ente; 2121002 = IVA retenido a proveedores pendiente de enterar.',
-    noPdf: true
+    nota: 'Suma de gastos operativos usados. Suele diferir del SENIAT por incluir gastos sin IVA.'
   });
 
   // Summary
   const hasSeniat = !!seniat;
-  const rowsWithDiff = rows.filter(r => !r.noPdf && r.diferencia !== null && Math.abs(r.diferencia) > 0.05);
+  const rowsWithDiff = rows.filter(r => r.diferencia !== null && Math.abs(r.diferencia) > 0.05);
   const totalDiff = rows
-    .filter(r => !r.noPdf && r.diferencia !== null)
+    .filter(r => r.diferencia !== null)
     .reduce((acc, r) => acc + Math.abs(r.diferencia), 0);
 
   return {
