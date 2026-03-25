@@ -523,10 +523,6 @@ const SHEET_MONTH_MAP = {
 };
 
 // Account codes in the balance that map to SENIAT fields
-// REGLA GENERAL:
-//   Cuentas de PASIVO (2xxxxxx): naturaleza acreedora → el HABER (Créditos) registra el cargo/causación
-//   Cuentas de ACTIVO (1xxxxxx): naturaleza deudora   → el DEBE  (Débitos)  registra el incremento
-//   Cuentas de INGRESO (4xxxxxx): naturaleza acreedora → el HABER (Créditos) registra el ingreso
 const ACCOUNT_MAP = [];
 
 // ─── File Inputs ──────────────────────────────────────────────────────────────
@@ -651,7 +647,7 @@ async function parseExcel(file) {
           const ws = wb.Sheets[sheetName];
           const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-          // Parse accounts: col0=account/name, col1=saldo_anterior, col2=debitos, col3=creditos, col4=saldo_actual
+          // Parse accounts: col0=account/name, col1=saldo_anterior, col2=debitos, col3=creditos, col4=saldo_actual, col5=movimiento
           const accounts = {};
           rows.forEach(row => {
             if (!row || !row[0]) return;
@@ -715,20 +711,6 @@ async function parseSeniatPdf(file) {
 
   const data = { month, rawText: fullText };
 
-  // Helper: extract value after item number pattern
-  function extractItem(itemNum) {
-    // Pattern: item number followed by value
-    const patterns = [
-      new RegExp(`\\b${itemNum}\\b\\s+([\\d.,]+)`),
-      new RegExp(`\\|\\s*${itemNum}\\s*\\|\\s*([\\d.,]+)`)
-    ];
-    for (const p of patterns) {
-      const m = fullText.match(p);
-      if (m) return parseVenFloat(m[1]);
-    }
-    return 0;
-  }
-
   function parseVenFloat(s) {
     if (!s) return 0;
     // Venezuelan format: 1.234,56 or 1234.56
@@ -743,7 +725,6 @@ async function parseSeniatPdf(file) {
   }
 
   // Extract all numbers from text in sequence - more robust approach
-  // We'll find key labels and their following numbers
   function extractAfterLabel(label, text) {
     const idx = text.indexOf(label);
     if (idx < 0) return 0;
@@ -802,6 +783,7 @@ async function parseSeniatPdf(file) {
   if (items[33] > 0) data.compras_internas_gravadas_base = items[33];
   if (items[43] > 0) data.debito_fiscal_calculado = items[43];
   if (items[39] > 0) data.total_creditos_fiscales = items[39];
+  if (items[38] > 0) data.ajustes_creditos = items[38]; // Añadido para Excedente Crédito Fiscal anterior
 
   return data;
 }
@@ -811,13 +793,10 @@ function reconcile(monthNum, accounts, seniat) {
   const rows = [];
 
   function getAccount(code) {
-    return accounts[code] || { code, name:'N/A', saldo_anterior:0, debitos:0, creditos:0, saldo_actual:0 };
+    return accounts[code] || { code, name:'N/A', saldo_anterior:0, debitos:0, creditos:0, saldo_actual:0, movimiento:0 };
   }
 
   // ── 1. DÉBITO FISCAL ──────────────────────────────────────────────────────
-  // Cta. 2121001 (Pasivo). Se usa el DEBE (debitos) = 11.822,71 en Enero.
-  // Es el movimiento que cancela/liquida el débito fiscal del período
-  // y es el valor que se compara contra el Total Débitos Fiscales del SENIAT.
   const deb2121 = getAccount('2121001');
   const balDebito = Math.abs(deb2121.debitos);
   const senDebito = seniat ? seniat.total_debitos_fiscales : null;
@@ -834,9 +813,6 @@ function reconcile(monthNum, accounts, seniat) {
   });
 
   // ── 2. CRÉDITO FISCAL ─────────────────────────────────────────────────────
-  // Cta. 1151001 (Activo). Se usa el HABER (creditos) = 17.783,58 en Enero.
-  // Es el movimiento que aplica/consume el crédito fiscal acumulado
-  // y es el valor que se compara contra el Total Créditos Fiscales del SENIAT.
   const cred1151 = getAccount('1151001');
   const balCredito = Math.abs(cred1151.creditos);
   const senCredito = seniat ? seniat.total_creditos_fiscales : null;
@@ -853,39 +829,37 @@ function reconcile(monthNum, accounts, seniat) {
   });
 
   // ── 3. EXCEDENTE CRÉDITO FISCAL ──────────────────────────────────────────
-  // Cta. 1151002 (Activo). El DEBE (debitos) = 7.522,82 = excedente del mes anterior
-  // que se trae al período actual (ítem 38 ajuste créditos anteriores en SENIAT).
-  // El saldo actual = lo que queda como excedente para el mes siguiente (ítem 60).
   const exc1151 = getAccount('1151002');
   const balExcDebe = Math.abs(exc1151.debitos);   // excedente anterior aplicado → ítem 38
-  const balExcSaldo = Math.abs(exc1151.saldo_actual); // excedente que pasa al siguiente → ítem 60
-  const senExcAnt = seniat ? seniat.excedente_credito_anterior : null;  // ítem 20 o ajuste 38
+  const balExcSaldo = Math.abs(exc1151.movimiento); // excedente que pasa al siguiente → ítem 60
+  
+  const senExcAnt = seniat ? seniat.ajustes_creditos : null;  // ítem 20 o ajuste 38
   const senExcSig = seniat ? seniat.excedente_credito_siguiente : null; // ítem 60
+  
   rows.push({
     id: 'excedente_anterior',
-    concepto: 'Excedente CF Mes Anterior (traído al período)',
+    concepto: 'Ajuste Créditos Fiscales Anteriores',
     codigosBalance: '1151002',
     campoBalance: 'Debe del período',
     valorBalance: balExcDebe,
     campoSeniat: 'Ítem 38 — Ajuste Créditos Períodos Anteriores',
     valorSeniat: senExcAnt,
     diferencia: senExcAnt !== null ? balExcDebe - senExcAnt : null,
-    nota: 'Cta. 1151002 — Debe del período: excedente traído del mes anterior y aplicado en esta declaración.'
+    nota: 'Cta. 1151002 — Debe del período.'
   });
   rows.push({
     id: 'excedente_siguiente',
-    concepto: 'Excedente CF para Mes Siguiente (saldo)',
+    concepto: 'Excedente CF para Mes Siguiente',
     codigosBalance: '1151002',
-    campoBalance: 'Saldo Actual',
+    campoBalance: 'Movimiento / Siguiente Col',
     valorBalance: balExcSaldo,
     campoSeniat: 'Ítem 60 — Excedente CF Mes Siguiente',
     valorSeniat: senExcSig,
     diferencia: senExcSig !== null ? balExcSaldo - senExcSig : null,
-    nota: 'Cta. 1151002 — Saldo actual: excedente que pasará al período siguiente.'
+    nota: 'Cta. 1151002 — Siguiente columna en el Excel (Movimiento).'
   });
 
   // ── 4. RETENCIONES IVA DEL PERÍODO ───────────────────────────────────────
-  // Cta. 1151007 (Activo). DEBE (debitos) = retenciones recibidas de clientes este período.
   const ret1151 = getAccount('1151007');
   const balRetDebe = Math.abs(ret1151.debitos);
   const senRet = seniat ? seniat.retenciones_periodo : null;
@@ -902,7 +876,6 @@ function reconcile(monthNum, accounts, seniat) {
   });
 
   // ── 5. BASE IMPONIBLE VENTAS GRAVADAS ────────────────────────────────────
-  // Ctas. 4131xxx (Ingresos, naturaleza acreedora). HABER (creditos) = ventas del período.
   const ingCodes = ['4131001','4131002','4131003'];
   const balVentasHaber = ingCodes.reduce((acc, c) => acc + Math.abs(getAccount(c).creditos), 0);
   const senVentasGrav = seniat ? seniat.ventas_internas_gravadas_base : null;
@@ -919,7 +892,6 @@ function reconcile(monthNum, accounts, seniat) {
   });
 
   // ── 6. BASE IMPONIBLE COMPRAS GRAVADAS ───────────────────────────────────
-  // Ctas. de gastos/costos (Egresos, naturaleza deudora). DEBE (debitos) = compras del período.
   const comprasCodes = [
     '6211002','6211003','6211005','6211007','6211010','6211014',
     '6211029','6211032','6211033','6211034','6211035','6211038','6211040',
