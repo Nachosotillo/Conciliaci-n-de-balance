@@ -482,7 +482,7 @@
       <input type="file" accept=".pdf" id="filePdf" multiple>
       <div class="dz-icon">📄</div>
       <div class="dz-label">Declaraciones SENIAT</div>
-      <div class="dz-sub">Uno o más PDFs — se detecta el mes automáticamente</div>
+      <div class="dz-sub">Ambas quincenas por mes (1era y 2da)</div>
       <div class="dz-files" id="pdfFiles"></div>
     </div>
   </div>
@@ -549,7 +549,6 @@ document.getElementById('filePdf').addEventListener('change', (e) => {
     el.classList.remove('drag-over');
     const inp = el.querySelector('input[type=file]');
     const dt = e.dataTransfer;
-    // Trigger change manually
     Object.defineProperty(inp, 'files', { value: dt.files, writable: true });
     inp.dispatchEvent(new Event('change'));
   });
@@ -584,14 +583,36 @@ document.getElementById('btnRun').addEventListener('click', async () => {
     const balanceData = await parseExcel(excelFile);
     setProgress(30);
 
-    // 2. Parse PDFs
+    // 2. Parse PDFs with Aggregation for Quincenas
     const seniatData = {};
     if (pdfFiles.length > 0) {
-      setStatus(`Extrayendo datos de ${pdfFiles.length} declaración(es)...`);
+      // Ordenamos los PDFs por nombre (ej: "05-01" va antes que "05-02") para procesar 1era quincena y luego la 2da
+      pdfFiles.sort((a, b) => a.name.localeCompare(b.name));
+      
+      setStatus(`Extrayendo y sumando datos de ${pdfFiles.length} declaración(es)...`);
       for (let i = 0; i < pdfFiles.length; i++) {
         const data = await parseSeniatPdf(pdfFiles[i]);
         if (data && data.month) {
-          seniatData[data.month] = data;
+          const m = data.month;
+          if (!seniatData[m]) {
+            seniatData[m] = { ...data, count: 1 };
+          } else {
+            // Agregamos la segunda quincena al mes correspondiente
+            seniatData[m].count += 1;
+            seniatData[m].total_debitos_fiscales += data.total_debitos_fiscales;
+            seniatData[m].total_creditos_fiscales_deducibles += data.total_creditos_fiscales_deducibles;
+            seniatData[m].ventas_internas_gravadas_base += data.ventas_internas_gravadas_base;
+            seniatData[m].ventas_no_gravadas += data.ventas_no_gravadas;
+            seniatData[m].compras_internas_gravadas_base += data.compras_internas_gravadas_base;
+            seniatData[m].total_creditos_fiscales += data.total_creditos_fiscales;
+            seniatData[m].retenciones_periodo += data.retenciones_periodo;
+            seniatData[m].cuota_tributaria += data.cuota_tributaria;
+            seniatData[m].total_pagar += data.total_pagar;
+            
+            // Para el Excedente Anterior (Ítem 38) mantenemos solo el arrastre del mes anterior (de la 1era quincena)
+            // Para el Excedente Siguiente (Ítem 60), siempre tomamos el último valor que se genere (de la 2da quincena)
+            seniatData[m].excedente_credito_siguiente = data.excedente_credito_siguiente;
+          }
         }
         setProgress(30 + ((i+1)/pdfFiles.length)*40);
       }
@@ -644,7 +665,6 @@ async function parseExcel(file) {
           const ws = wb.Sheets[sheetName];
           const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-          // Parse accounts: col0=account/name, col1=saldo_anterior, col2=debitos, col3=creditos, col4=saldo_actual, col5=movimiento
           const accounts = {};
           rows.forEach(row => {
             if (!row || !row[0]) return;
@@ -694,7 +714,6 @@ async function parseSeniatPdf(file) {
     fullText += content.items.map(it => it.str).join(' ') + '\n';
   }
 
-  // Extract period (MES/AÑO)
   const periodMatch = fullText.match(/MES\s+A[ÑN]O\s+(\d{2})\s+(\d{4})/);
   if (!periodMatch) {
     const alt = fullText.match(/(\d{2})\s+2024/);
@@ -726,7 +745,6 @@ async function parseSeniatPdf(file) {
     return parseVenFloat(m[0]);
   }
 
-  // Key SENIAT fields
   data.ventas_no_gravadas = extractAfterLabel('Ventas Internas no Gravadas', fullText);
   data.ventas_exportacion = extractAfterLabel('Ventas de Exportaci', fullText);
   data.ventas_internas_gravadas_base = extractAfterLabel('Ventas Internas Gravadas por Al', fullText);
@@ -749,8 +767,7 @@ async function parseSeniatPdf(file) {
   data.saldo_retenciones = extractAfterLabel('Saldo de Retenciones de IVA no aplicado', fullText);
   data.total_pagar = extractAfterLabel('Total a Pagar', fullText);
 
-  // Debito fiscal line (item 43)
-  data.debito_fiscal_item43 = extractAfterLabel('11.805', fullText) || 0; // fallback
+  data.debito_fiscal_item43 = extractAfterLabel('11.805', fullText) || 0;
 
   const itemPattern = /\b(\d{2,3})\b\s+([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)\b/g;
   const items = {};
@@ -763,7 +780,6 @@ async function parseSeniatPdf(file) {
   }
   data.items = items;
 
-  // Override with item-based if better
   if (items[49] > 0) data.total_debitos_fiscales = items[49];
   if (items[71] > 0) data.total_creditos_fiscales_deducibles = items[71];
   if (items[60] > 0) data.excedente_credito_siguiente = items[60];
@@ -820,11 +836,11 @@ function reconcile(monthNum, accounts, seniat) {
 
   // ── 3. EXCEDENTE CRÉDITO FISCAL ──────────────────────────────────────────
   const exc1151 = getAccount('1151002');
-  const balExcDebe = Math.abs(exc1151.debitos);   // excedente anterior aplicado → ítem 38
-  const balExcSaldo = Math.abs(exc1151.movimiento); // excedente que pasa al siguiente → ítem 60
+  const balExcDebe = Math.abs(exc1151.debitos);
+  const balExcSaldo = Math.abs(exc1151.movimiento);
   
-  const senExcAnt = seniat ? seniat.ajustes_creditos : null;  // ítem 20 o ajuste 38
-  const senExcSig = seniat ? seniat.excedente_credito_siguiente : null; // ítem 60
+  const senExcAnt = seniat ? seniat.ajustes_creditos : null;
+  const senExcSig = seniat ? seniat.excedente_credito_siguiente : null;
   
   rows.push({
     id: 'excedente_anterior',
@@ -835,7 +851,7 @@ function reconcile(monthNum, accounts, seniat) {
     campoSeniat: 'Ítem 38 — Ajuste Créditos Períodos Anteriores',
     valorSeniat: senExcAnt,
     diferencia: senExcAnt !== null ? balExcDebe - senExcAnt : null,
-    nota: 'Debe del período (monto aplicado en esta declaración).'
+    nota: 'Debe del período (monto aplicado de meses anteriores).'
   });
   rows.push({
     id: 'excedente_siguiente',
@@ -868,7 +884,7 @@ function reconcile(monthNum, accounts, seniat) {
     campoSeniat: 'Ítem 42 — Ventas Gravadas Base Imponible',
     valorSeniat: senVentasGrav,
     diferencia: senVentasGrav !== null ? balVentasHaber - senVentasGrav : null,
-    nota: 'Haber del período. Nota: El balance es mensual, el PDF puede ser quincenal.'
+    nota: 'Haber del período. Nota: Montos acumulados si se subieron ambas quincenas.'
   });
 
   // ── 5. BASE IMPONIBLE COMPRAS GRAVADAS ───────────────────────────────────
@@ -989,9 +1005,9 @@ function buildMonthPanel(r) {
   const { monthName, rows, hasSeniat, seniat, hasDiscrepancies, discrepancyCount, totalAbsDiff } = r;
 
   // Summary cards
-  const okRows = rows.filter(rr => !rr.noPdf && rr.diferencia !== null && Math.abs(rr.diferencia) < 0.05).length;
-  const warnRows = rows.filter(rr => !rr.noPdf && rr.diferencia !== null && Math.abs(rr.diferencia) >= 0.05 && Math.abs(rr.diferencia) < 50).length;
-  const errRows = rows.filter(rr => !rr.noPdf && rr.diferencia !== null && Math.abs(rr.diferencia) >= 50).length;
+  const okRows = rows.filter(rr => rr.diferencia !== null && Math.abs(rr.diferencia) < 0.05).length;
+  const warnRows = rows.filter(rr => rr.diferencia !== null && Math.abs(rr.diferencia) >= 0.05 && Math.abs(rr.diferencia) < 50).length;
+  const errRows = rows.filter(rr => rr.diferencia !== null && Math.abs(rr.diferencia) >= 50).length;
 
   let cardsHtml = `
   <div class="summary-cards">
@@ -1024,7 +1040,7 @@ function buildMonthPanel(r) {
   if (hasSeniat && seniat) {
     seniatHtml = `
     <div class="seniat-block">
-      <h4>📋 Datos Declaración SENIAT — ${monthName} 2024</h4>
+      <h4>📋 Datos Declaración SENIAT — ${monthName} 2024 (${seniat.count} planilla(s) sumada(s))</h4>
       <div class="seniat-grid">
         <div class="seniat-item"><label>Ítem 49 — Total Débitos Fiscales</label><value>${fmt(seniat.total_debitos_fiscales)}</value></div>
         <div class="seniat-item"><label>Ítem 71 — Créditos Deducibles</label><value>${fmt(seniat.total_creditos_fiscales_deducibles)}</value></div>
@@ -1043,8 +1059,7 @@ function buildMonthPanel(r) {
 
   // Reconciliation table
   const tableRows = rows.map(row => {
-    const dc = row.noPdf ? diffClass(row.diferencia) : (row.diferencia === null ? '' : diffClass(row.diferencia));
-    const isInternal = row.noPdf;
+    const dc = row.diferencia === null ? '' : diffClass(row.diferencia);
     return `
     <tr>
       <td>
@@ -1053,7 +1068,7 @@ function buildMonthPanel(r) {
       </td>
       <td class="right">${fmt(row.valorBalance)}</td>
       <td>${row.campoSeniat}</td>
-      <td class="right">${isInternal ? fmt(row.valorSeniat) : (row.valorSeniat !== null ? fmt(row.valorSeniat) : '—')}</td>
+      <td class="right">${row.valorSeniat !== null ? fmt(row.valorSeniat) : '—'}</td>
       <td class="right"><span class="diff-cell ${dc}">${diffLabel(row.diferencia)}</span></td>
       <td style="font-size:11px;color:var(--text2);max-width:200px">${row.nota}</td>
     </tr>`;
