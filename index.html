@@ -815,151 +815,112 @@ function reconcile(monthNum, accounts, seniat) {
     return accounts[code] || { code, name:'N/A', saldo_anterior:0, debitos:0, creditos:0, saldo_actual:0 };
   }
 
-  // ── 1. DÉBITO FISCAL CAUSADO EN EL PERÍODO ───────────────────────────────
-  // Cta. 2121001 es PASIVO (naturaleza acreedora).
-  // El HABER (Créditos) del período registra la causación del débito fiscal
-  // (facturación × alícuota → obligación con el Fisco).
-  // Ese valor debe coincidir con el Ítem 43 (débito fiscal calculado) del SENIAT.
+  // ── 1. DÉBITO FISCAL ──────────────────────────────────────────────────────
+  // Cta. 2121001 (Pasivo). Se usa el DEBE (debitos) = 11.822,71 en Enero.
+  // Es el movimiento que cancela/liquida el débito fiscal del período
+  // y es el valor que se compara contra el Total Débitos Fiscales del SENIAT.
   const deb2121 = getAccount('2121001');
-  const balDebitoCausado = Math.abs(deb2121.creditos);
-  const senDebitoItem43 = seniat ? (seniat.debito_fiscal_calculado || seniat.total_debitos_fiscales) : null;
+  const balDebito = Math.abs(deb2121.debitos);
+  const senDebito = seniat ? seniat.total_debitos_fiscales : null;
   rows.push({
-    id: 'debito_causado',
-    concepto: 'Débito Fiscal Causado (Haber del período)',
+    id: 'debito_fiscal',
+    concepto: 'Débito Fiscal',
     codigosBalance: '2121001',
-    campoBalance: 'Haber (Créditos del período)',
-    valorBalance: balDebitoCausado,
-    campoSeniat: 'Ítem 43 / 49 — Débito Fiscal del Período',
-    valorSeniat: senDebitoItem43,
-    diferencia: senDebitoItem43 !== null ? balDebitoCausado - senDebitoItem43 : null,
-    nota: 'Pasivo: el HABER registra el IVA cobrado en ventas (causación). Debe = Ventas gravadas × 16%.'
-  });
-
-  // ── 2. DÉBITO FISCAL — TOTAL ACUMULADO EN LIBROS (Saldo actual) ──────────
-  // El saldo actual de 2121001 refleja lo que queda pendiente de pagar al Fisco
-  // después de compensar retenciones/excedentes. Referencia adicional.
-  const balDebitoSaldo = Math.abs(deb2121.saldo_actual);
-  const senDebitoTotal = seniat ? seniat.total_debitos_fiscales : null;
-  rows.push({
-    id: 'debito_saldo',
-    concepto: 'Débito Fiscal — Saldo Actual en Libros',
-    codigosBalance: '2121001',
-    campoBalance: 'Saldo Actual',
-    valorBalance: balDebitoSaldo,
+    campoBalance: 'Debe del período',
+    valorBalance: balDebito,
     campoSeniat: 'Ítem 49 — Total Débitos Fiscales',
-    valorSeniat: senDebitoTotal,
-    diferencia: senDebitoTotal !== null ? balDebitoSaldo - senDebitoTotal : null,
-    nota: 'Saldo acumulado del pasivo de débito fiscal. Refleja obligación neta pendiente al cierre del período.'
+    valorSeniat: senDebito,
+    diferencia: senDebito !== null ? balDebito - senDebito : null,
+    nota: 'Cta. 2121001 — columna Debe del período (valor que liquida el débito fiscal).'
   });
 
-  // ── 3. CRÉDITO FISCAL DEL PERÍODO (deducible de compras) ─────────────────
-  // Cta. 1151001 es ACTIVO (naturaleza deudora).
-  // El HABER (Créditos) registra el uso/aplicación del crédito fiscal acumulado.
-  // Ese monto debe coincidir con el crédito total deducido según SENIAT (Ítem 39/71).
+  // ── 2. CRÉDITO FISCAL ─────────────────────────────────────────────────────
+  // Cta. 1151001 (Activo). Se usa el HABER (creditos) = 17.783,58 en Enero.
+  // Es el movimiento que aplica/consume el crédito fiscal acumulado
+  // y es el valor que se compara contra el Total Créditos Fiscales del SENIAT.
   const cred1151 = getAccount('1151001');
-  const balCreditoUsado = Math.abs(cred1151.creditos);
-  const senCreditoTotal = seniat ? seniat.total_creditos_fiscales : null;
+  const balCredito = Math.abs(cred1151.creditos);
+  const senCredito = seniat ? seniat.total_creditos_fiscales : null;
   rows.push({
-    id: 'credito_usado',
-    concepto: 'Crédito Fiscal Aplicado (Haber del período)',
+    id: 'credito_fiscal',
+    concepto: 'Crédito Fiscal',
     codigosBalance: '1151001',
-    campoBalance: 'Haber (Créditos del período)',
-    valorBalance: balCreditoUsado,
+    campoBalance: 'Haber del período',
+    valorBalance: balCredito,
     campoSeniat: 'Ítem 39 — Total Créditos Fiscales',
-    valorSeniat: senCreditoTotal,
-    diferencia: senCreditoTotal !== null ? balCreditoUsado - senCreditoTotal : null,
-    nota: 'Activo: el HABER registra el CF utilizado/compensado en el período. Ítem 39 = suma de todos los créditos aplicados.'
+    valorSeniat: senCredito,
+    diferencia: senCredito !== null ? balCredito - senCredito : null,
+    nota: 'Cta. 1151001 — columna Haber del período (crédito fiscal aplicado/consumido).'
   });
 
-  // También: el DEBE (Débitos) de 1151001 = crédito fiscal generado por compras gravadas del período
-  const balCreditoGenerado = Math.abs(cred1151.debitos);
-  const senCreditoDeducible = seniat ? seniat.total_creditos_fiscales_deducibles : null;
-  rows.push({
-    id: 'credito_generado',
-    concepto: 'Crédito Fiscal Generado (Debe del período)',
-    codigosBalance: '1151001',
-    campoBalance: 'Debe (Débitos del período)',
-    valorBalance: balCreditoGenerado,
-    campoSeniat: 'Ítem 71 — Total Créditos Fiscales Deducibles',
-    valorSeniat: senCreditoDeducible,
-    diferencia: senCreditoDeducible !== null ? balCreditoGenerado - senCreditoDeducible : null,
-    nota: 'Activo: el DEBE registra el IVA soportado en compras del período. Incluye crédito nuevo + excedente anterior aplicado.'
-  });
-
-  // ── 4. EXCEDENTE CRÉDITO FISCAL (para el mes siguiente) ──────────────────
-  // Cta. 1151002 es ACTIVO.
-  // El movimiento neto del período (Debe − Haber) = variación del excedente.
-  // El saldo al cierre debe coincidir con el Ítem 60 del SENIAT.
+  // ── 3. EXCEDENTE CRÉDITO FISCAL ──────────────────────────────────────────
+  // Cta. 1151002 (Activo). El DEBE (debitos) = 7.522,82 = excedente del mes anterior
+  // que se trae al período actual (ítem 38 ajuste créditos anteriores en SENIAT).
+  // El saldo actual = lo que queda como excedente para el mes siguiente (ítem 60).
   const exc1151 = getAccount('1151002');
-  // Movimiento neto: Debe (entrada excedente nuevo) − Haber (excedente aplicado al mes anterior)
-  const balExcMovimiento = Math.abs(exc1151.debitos - exc1151.creditos);  // neto período
-  const balExcSaldo = Math.abs(exc1151.saldo_actual);
-  const senExc = seniat ? seniat.excedente_credito_siguiente : null;
+  const balExcDebe = Math.abs(exc1151.debitos);   // excedente anterior aplicado → ítem 38
+  const balExcSaldo = Math.abs(exc1151.saldo_actual); // excedente que pasa al siguiente → ítem 60
+  const senExcAnt = seniat ? seniat.excedente_credito_anterior : null;  // ítem 20 o ajuste 38
+  const senExcSig = seniat ? seniat.excedente_credito_siguiente : null; // ítem 60
   rows.push({
-    id: 'excedente_cf',
-    concepto: 'Excedente Crédito Fiscal (saldo al cierre)',
+    id: 'excedente_anterior',
+    concepto: 'Excedente CF Mes Anterior (traído al período)',
+    codigosBalance: '1151002',
+    campoBalance: 'Debe del período',
+    valorBalance: balExcDebe,
+    campoSeniat: 'Ítem 38 — Ajuste Créditos Períodos Anteriores',
+    valorSeniat: senExcAnt,
+    diferencia: senExcAnt !== null ? balExcDebe - senExcAnt : null,
+    nota: 'Cta. 1151002 — Debe del período: excedente traído del mes anterior y aplicado en esta declaración.'
+  });
+  rows.push({
+    id: 'excedente_siguiente',
+    concepto: 'Excedente CF para Mes Siguiente (saldo)',
     codigosBalance: '1151002',
     campoBalance: 'Saldo Actual',
     valorBalance: balExcSaldo,
-    campoSeniat: 'Ítem 60 — Excedente CF para mes siguiente',
-    valorSeniat: senExc,
-    diferencia: senExc !== null ? balExcSaldo - senExc : null,
-    nota: 'El saldo actual de 1151002 debe coincidir con el excedente que pasa al período siguiente (Ítem 60).'
-  });
-  rows.push({
-    id: 'excedente_cf_mov',
-    concepto: 'Excedente CF — Movimiento neto del período',
-    codigosBalance: '1151002',
-    campoBalance: 'Debe − Haber del período',
-    valorBalance: balExcMovimiento,
-    campoSeniat: 'Ítem 60 — Excedente CF (variación)',
-    valorSeniat: senExc,
-    diferencia: senExc !== null ? balExcMovimiento - senExc : null,
-    nota: 'Variación neta de 1151002 en el período. Alta precisión con Ítem 60 cuando el saldo inicial era cero.'
+    campoSeniat: 'Ítem 60 — Excedente CF Mes Siguiente',
+    valorSeniat: senExcSig,
+    diferencia: senExcSig !== null ? balExcSaldo - senExcSig : null,
+    nota: 'Cta. 1151002 — Saldo actual: excedente que pasará al período siguiente.'
   });
 
-  // ── 5. RETENCIONES IVA DEL PERÍODO ───────────────────────────────────────
-  // Cta. 1151007 es ACTIVO.
-  // El DEBE (Débitos) registra las retenciones que el ente recibió de sus clientes agentes de retención.
-  // Debe coincidir con el Ítem 66 del SENIAT.
+  // ── 4. RETENCIONES IVA DEL PERÍODO ───────────────────────────────────────
+  // Cta. 1151007 (Activo). DEBE (debitos) = retenciones recibidas de clientes este período.
   const ret1151 = getAccount('1151007');
   const balRetDebe = Math.abs(ret1151.debitos);
   const senRet = seniat ? seniat.retenciones_periodo : null;
   rows.push({
     id: 'retenciones_periodo',
-    concepto: 'Retenciones IVA del Período (Debe)',
+    concepto: 'Retenciones IVA del Período',
     codigosBalance: '1151007',
-    campoBalance: 'Debe (Débitos del período)',
+    campoBalance: 'Debe del período',
     valorBalance: balRetDebe,
     campoSeniat: 'Ítem 66 — Retenciones del Período',
     valorSeniat: senRet,
     diferencia: senRet !== null ? balRetDebe - senRet : null,
-    nota: 'Activo: el DEBE registra las retenciones cobradas al ente por clientes agentes de retención.'
+    nota: 'Cta. 1151007 — Debe del período: IVA retenido por clientes agentes de retención.'
   });
 
-  // ── 6. BASE IMPONIBLE VENTAS GRAVADAS ────────────────────────────────────
-  // Ctas. 4131xxx son INGRESOS (naturaleza acreedora).
-  // El HABER (Créditos) del período = ventas del mes.
-  // Debe coincidir con la base gravada declarada en Ítem 42.
+  // ── 5. BASE IMPONIBLE VENTAS GRAVADAS ────────────────────────────────────
+  // Ctas. 4131xxx (Ingresos, naturaleza acreedora). HABER (creditos) = ventas del período.
   const ingCodes = ['4131001','4131002','4131003'];
   const balVentasHaber = ingCodes.reduce((acc, c) => acc + Math.abs(getAccount(c).creditos), 0);
   const senVentasGrav = seniat ? seniat.ventas_internas_gravadas_base : null;
   rows.push({
     id: 'base_ventas_grav',
-    concepto: 'Base Imponible — Ventas Gravadas (Haber)',
+    concepto: 'Base Imponible — Ventas Gravadas',
     codigosBalance: '4131001 + 4131002 + 4131003',
-    campoBalance: 'Haber (Créditos del período)',
+    campoBalance: 'Haber del período',
     valorBalance: balVentasHaber,
     campoSeniat: 'Ítem 42 — Ventas Gravadas Base Imponible',
     valorSeniat: senVentasGrav,
     diferencia: senVentasGrav !== null ? balVentasHaber - senVentasGrav : null,
-    nota: 'Ingresos: el HABER registra ventas/ingresos del mes. La diferencia indica ventas en otras cuentas o no gravadas declaradas.'
+    nota: 'Cuentas 4131xxx — Haber del período: ventas/ingresos del mes.'
   });
 
-  // ── 7. BASE IMPONIBLE COMPRAS GRAVADAS ───────────────────────────────────
-  // Ctas. de gastos y costos son EGRESOS (naturaleza deudora).
-  // El DEBE (Débitos) = compras/gastos del período que generan crédito fiscal.
-  // Debe coincidir con la base de compras gravadas Ítem 33.
+  // ── 6. BASE IMPONIBLE COMPRAS GRAVADAS ───────────────────────────────────
+  // Ctas. de gastos/costos (Egresos, naturaleza deudora). DEBE (debitos) = compras del período.
   const comprasCodes = [
     '6211002','6211003','6211005','6211007','6211010','6211014',
     '6211029','6211032','6211033','6211034','6211035','6211038','6211040',
@@ -971,31 +932,29 @@ function reconcile(monthNum, accounts, seniat) {
   const senComprasGrav = seniat ? seniat.compras_internas_gravadas_base : null;
   rows.push({
     id: 'compras_grav',
-    concepto: 'Base Imponible — Compras Gravadas (Debe)',
+    concepto: 'Base Imponible — Compras Gravadas',
     codigosBalance: 'Gastos operativos (5111xxx, 6111xxx, 6211xxx, 1133001)',
-    campoBalance: 'Debe (Débitos del período)',
+    campoBalance: 'Debe del período',
     valorBalance: balComprasDebe,
     campoSeniat: 'Ítem 33 — Compras Internas Gravadas Base',
     valorSeniat: senComprasGrav,
     diferencia: senComprasGrav !== null ? balComprasDebe - senComprasGrav : null,
-    nota: 'Egresos: el DEBE registra compras y gastos del mes. Solo se incluyen gastos con IVA (no sueldos, prestaciones, etc.).'
+    nota: 'Cuentas de gastos — Debe del período. Solo incluye compras con IVA (excluye nómina, prestaciones).'
   });
 
-  // ── 8. CRUCE INTERNO: Retenciones IVA Activo vs Pasivo ───────────────────
-  // 1151007 (activo) = retenciones que el ente tiene a favor
-  // 2121002 (pasivo) = retenciones que el ente retiene de proveedores para enterar
-  const balRetActSaldo  = Math.abs(getAccount('1151007').saldo_actual);
-  const balRetPasSaldo  = Math.abs(getAccount('2121002').saldo_actual);
+  // ── 7. CRUCE INTERNO: Retenciones IVA Activo vs Pasivo ───────────────────
+  const balRetActSaldo = Math.abs(getAccount('1151007').saldo_actual);
+  const balRetPasSaldo = Math.abs(getAccount('2121002').saldo_actual);
   rows.push({
     id: 'cruce_retenciones',
-    concepto: 'Cruce Retenciones IVA — Activo (1151007) vs Pasivo (2121002)',
+    concepto: 'Cruce Retenciones IVA — 1151007 vs 2121002',
     codigosBalance: '1151007 vs 2121002',
-    campoBalance: 'Saldo Actual de ambas cuentas',
+    campoBalance: 'Saldo Actual de ambas',
     valorBalance: balRetActSaldo,
-    campoSeniat: 'Saldo 2121002 (Ret. IVA por enterar)',
+    campoSeniat: 'Saldo 2121002 (Ret. por enterar)',
     valorSeniat: balRetPasSaldo,
     diferencia: balRetActSaldo - balRetPasSaldo,
-    nota: 'Cuadre interno. 1151007 = IVA retenido a favor del ente; 2121002 = IVA retenido a proveedores pendiente de enterar.',
+    nota: '1151007 = IVA retenido a favor del ente; 2121002 = IVA retenido a proveedores pendiente de enterar.',
     noPdf: true
   });
 
