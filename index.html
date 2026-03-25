@@ -470,7 +470,6 @@
 
 <div class="main">
 
-  <!-- Upload -->
   <div class="upload-grid">
     <div class="drop-zone" id="dzExcel">
       <input type="file" accept=".xlsx,.xls" id="fileExcel" multiple>
@@ -498,7 +497,6 @@
     </div>
   </div>
 
-  <!-- Results -->
   <div class="results-section" id="resultsSection">
 
     <div class="month-tabs" id="monthTabs"></div>
@@ -803,6 +801,7 @@ async function parseSeniatPdf(file) {
   if (items[40] > 0) data.ventas_no_gravadas = items[40];
   if (items[33] > 0) data.compras_internas_gravadas_base = items[33];
   if (items[43] > 0) data.debito_fiscal_calculado = items[43];
+  if (items[39] > 0) data.total_creditos_fiscales = items[39];
 
   return data;
 }
