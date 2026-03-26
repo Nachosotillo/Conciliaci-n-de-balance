@@ -812,7 +812,7 @@ async function parseSeniatPdf(file) {
 
         // ASIGNACIÓN DIRECTA DE CASILLAS
         data.ventas_no_gravadas = items[40] || 0;
-        data.ventas_internas_gravadas_base = items[42] || 0;
+        data.ventas_internas_gravadas_base = items[46] || 0; // Cambiado del 42 al 46
         data.total_debitos_fiscales = items[49] || 0;
         
         data.compras_internas_gravadas_base = items[33] || 0;
@@ -924,7 +924,7 @@ function reconcile(monthNum, accounts, seniat) {
     codigosBalance: nombresVentas,
     campoBalance: 'Haber del período',
     valorBalance: balVentasHaber,
-    campoSeniat: 'Ítem 42 — Ventas Gravadas Base Imponible',
+    campoSeniat: 'Ítem 46 — Ventas Gravadas Base Imponible',
     valorSeniat: senVentasGrav,
     diferencia: senVentasGrav !== null ? balVentasHaber - senVentasGrav : null,
     nota: 'Haber del período. Nota: Montos acumulados si se subieron ambas quincenas.'
@@ -1088,7 +1088,7 @@ function buildMonthPanel(r) {
         <div class="seniat-item"><label>Ítem 49 — Total Débitos Fiscales</label><value>${fmt(seniat.total_debitos_fiscales)}</value></div>
         <div class="seniat-item"><label>Ítem 71 — Créditos Deducibles</label><value>${fmt(seniat.total_creditos_fiscales_deducibles)}</value></div>
         <div class="seniat-item"><label>Ítem 60 — Excedente CF</label><value>${fmt(seniat.excedente_credito_siguiente)}</value></div>
-        <div class="seniat-item"><label>Ítem 42 — Base Ventas Gravadas</label><value>${fmt(seniat.ventas_internas_gravadas_base)}</value></div>
+        <div class="seniat-item"><label>Ítem 46 — Base Ventas Gravadas</label><value>${fmt(seniat.ventas_internas_gravadas_base)}</value></div>
         <div class="seniat-item"><label>Ítem 40 — Ventas No Gravadas</label><value>${fmt(seniat.ventas_no_gravadas)}</value></div>
         <div class="seniat-item"><label>Ítem 33 — Base Compras Gravadas</label><value>${fmt(seniat.compras_internas_gravadas_base)}</value></div>
         <div class="seniat-item"><label>Ítem 66 — Retenciones Período</label><value>${fmt(seniat.retenciones_periodo)}</value></div>
